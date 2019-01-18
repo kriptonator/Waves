@@ -18,7 +18,7 @@ class LocalMatcherQueue(settings: Settings, store: LocalQueueStore, time: Time)(
   private val timer                                       = new Timer("local-dex-queue", true)
   private val thread                                      = Executors.newSingleThreadExecutor()
 
-  override def startConsume(fromOffset: QueueEventWithMeta.Offset, process: QueueEventWithMeta => Future[Unit]): Unit = {
+  override def startConsume(fromOffset: QueueEventWithMeta.Offset, process: QueueEventWithMeta => Unit): Unit = {
     if (settings.cleanBeforeConsume) store.dropUntil(fromOffset)
     lastUnreadOffset = fromOffset
 

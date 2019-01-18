@@ -117,7 +117,7 @@ class OrderBookActor(owner: ActorRef,
   private def onAddOrder(eventWithMeta: QueueEventWithMeta, order: Order): Unit = {
     log.trace(s"Order accepted: '${order.id()}' in '${order.assetPair.key}', trying to match ...")
     matchTimer.measure(matchOrder(eventWithMeta, LimitOrder(order)))
-    sender() ! OrderAccepted(order)
+    sender() ! OrderAccepted(order) // TODO respond immediately
   }
 
   private def applyEvent(e: Event): Unit = {

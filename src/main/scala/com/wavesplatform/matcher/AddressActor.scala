@@ -22,7 +22,6 @@ import scala.concurrent.duration.FiniteDuration
 
 class AddressActor(
     owner: Address,
-    portfolio: => Portfolio,
     maxTimestampDrift: FiniteDuration,
     cancelTimeout: FiniteDuration,
     orderDB: OrderDB,
@@ -33,11 +32,15 @@ class AddressActor(
   import AddressActor._
   import context.dispatcher
 
+  private type SpendableBalance = Map[Option[AssetId], Long]
+
   protected override def log = LoggerFacade(LoggerFactory.getLogger(s"AddressActor[$owner]"))
 
-  private val activeOrders  = mutable.AnyRefMap.empty[ByteStr, LimitOrder]
-  private val openVolume    = mutable.AnyRefMap.empty[Option[AssetId], Long].withDefaultValue(0L)
-  private var latestOrderTs = 0L
+  private var spendableBalance = toSpendable(Portfolio.empty)
+  private val activeOrders     = mutable.AnyRefMap.empty[Order.Id, LimitOrder]
+  private val openVolume       = mutable.AnyRefMap.empty[Option[AssetId], Long].withDefaultValue(0L)
+  private var latestOrderTs    = 0L
+  private val markedToCancel   = mutable.Set.empty[Order.Id]
 
   private def reserve(limitOrder: LimitOrder): Unit =
     for ((id, b) <- limitOrder.requiredBalance if b != 0) {
@@ -64,10 +67,7 @@ class AddressActor(
     latestOrderTs = newTimestamp
   }
 
-  private def tradableBalance(assetId: Option[AssetId]): Long = {
-    val p = portfolio
-    assetId.fold(p.spendableBalance)(p.assets.getOrElse(_, 0L)) - openVolume(assetId)
-  }
+  private def tradableBalance(assetId: Option[AssetId]): Long = spendableBalance(assetId) - openVolume(assetId)
 
   private val validator =
     OrderValidator.accountStateAware(owner,
@@ -77,6 +77,14 @@ class AddressActor(
                                      id => activeOrders.contains(id) || orderDB.contains(id)) _
 
   private def handleCommands: Receive = {
+    case BalanceUpdated(newPortfolio) =>
+      // Also if not changed
+      log.trace(s"Balance changed: $spendableBalance -> $newPortfolio")
+      spendableBalance = toSpendable(newPortfolio)
+      val toCancel = ordersToDelete(spendableBalance, activeOrders.values.toVector)
+      log.debug(s"Canceling: $toCancel")
+      toCancel.foreach(storeEvent)
+
     case PlaceOrder(o) =>
       log.debug(s"New order: ${o.json()}")
       validator(o) match {
@@ -146,6 +154,7 @@ class AddressActor(
       release(lo.order.id())
       val l = lo.order.amount - lo.amount
       handleOrderTerminated(lo, if (unmatchable) LimitOrder.Filled(l) else LimitOrder.Cancelled(l))
+      markedToCancel -= lo.order.id()
   }
 
   private def handleOrderExecuted(remaining: LimitOrder): Unit = if (remaining.order.sender.toAddress == owner) {
@@ -171,6 +180,43 @@ class AddressActor(
   }
 
   def receive: Receive = handleCommands orElse handleExecutionEvents orElse handleStatusRequests
+
+  private def ordersToDelete(init: SpendableBalance, orders: IndexedSeq[LimitOrder]): Vector[QueueEvent.Canceled] = {
+    // Probably, we need to check orders with changed assets only.
+    // Now a user can have 100 active transaction maximum - easy to traverse.
+    val ordersByPriority = orders.sortBy(_.order.timestamp)(Ordering[Long]) // Will cancel new orders first
+    val (_, r) = ordersByPriority.foldLeft((init, Vector.empty[QueueEvent.Canceled])) {
+      case ((rest, toDelete), lo) =>
+        val id = lo.order.id()
+        if (markedToCancel.contains(id)) (rest, toDelete)
+        else {
+          val updatedPortfolio = lo.requiredBalance.foldLeft[Option[SpendableBalance]](Some(rest)) {
+            case (p, (assetId, requiredValue)) => p.flatMap(remove(_, assetId, requiredValue))
+          }
+
+          updatedPortfolio match {
+            case None =>
+              markedToCancel += id
+              (rest, toDelete :+ QueueEvent.Canceled(lo.order.assetPair, id))
+
+            case Some(x) => (x, toDelete)
+          }
+        }
+    }
+    r
+  }
+
+  private def toSpendable(p: Portfolio): SpendableBalance =
+    p.assets
+      .map { case (k, v) => (Some(k): Option[AssetId]) -> v }
+      .updated(None, p.spendableBalance)
+      .withDefaultValue(0)
+
+  private def remove(spendable: SpendableBalance, assetId: Option[AssetId], amount: Long): Option[SpendableBalance] = {
+    val updatedAmount = spendable.getOrElse(assetId, 0L) - amount
+    if (updatedAmount < 0) None
+    else Some(spendable.updated(assetId, updatedAmount))
+  }
 }
 
 object AddressActor {
@@ -186,6 +232,7 @@ object AddressActor {
   case class PlaceOrder(order: Order)                                     extends Command
   case class CancelOrder(orderId: ByteStr)                                extends Command
   case class CancelAllOrders(pair: Option[AssetPair], timestamp: Long)    extends Command
+  case class BalanceUpdated(newPortfolio: Portfolio)                      extends Command
 
   private case class CancelTimedOut(orderId: ByteStr)
 }

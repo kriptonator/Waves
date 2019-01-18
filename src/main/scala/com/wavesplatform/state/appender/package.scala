@@ -81,9 +81,7 @@ package object appender extends ScorexLogging {
       maybeDiscardedTxs <- blockchainUpdater.processBlock(block)
     } yield {
       utxStorage.removeAll(block.transactionData)
-      utxStorage.batched { ops =>
-        maybeDiscardedTxs.toSeq.flatten.foreach(ops.putIfNew)
-      }
+      maybeDiscardedTxs.toSeq.flatten.foreach(utxStorage.putIfNew)
       maybeDiscardedTxs.map(_ => baseHeight)
     }
 

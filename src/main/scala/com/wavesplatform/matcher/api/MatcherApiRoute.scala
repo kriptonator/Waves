@@ -503,20 +503,12 @@ case class MatcherApiRoute(assetPairBuilder: AssetPairBuilder,
 
   @Path("/debug/currentOffset")
   @ApiOperation(value = "Get a current offset in the queue", notes = "", httpMethod = "GET")
-  @ApiImplicitParams(
-    Array(
-      new ApiImplicitParam(name = "orderId", value = "Order Id", dataType = "string", paramType = "path")
-    ))
   def getCurrentOffset: Route = (path("debug" / "currentOffset") & get & withAuth) {
     complete(StatusCodes.OK -> currentOffset())
   }
 
   @Path("/debug/oldestSnapshotOffset")
   @ApiOperation(value = "Get the oldest snapshot's offset in the queue", notes = "", httpMethod = "GET")
-  @ApiImplicitParams(
-    Array(
-      new ApiImplicitParam(name = "orderId", value = "Order Id", dataType = "string", paramType = "path")
-    ))
   def getOldestSnapshotOffset: Route = (path("debug" / "oldestSnapshotOffset") & get & withAuth) {
     complete {
       (matcher ? GetSnapshotOffsets).mapTo[SnapshotOffsetsResponse].map { x =>
@@ -527,10 +519,6 @@ case class MatcherApiRoute(assetPairBuilder: AssetPairBuilder,
 
   @Path("/debug/allSnapshotOffsets")
   @ApiOperation(value = "Get all snapshots' offsets in the queue", notes = "", httpMethod = "GET")
-  @ApiImplicitParams(
-    Array(
-      new ApiImplicitParam(name = "orderId", value = "Order Id", dataType = "string", paramType = "path")
-    ))
   def getAllSnapshotOffsets: Route = (path("debug" / "allSnapshotOffsets") & get & withAuth) {
     complete {
       (matcher ? GetSnapshotOffsets).mapTo[SnapshotOffsetsResponse].map { x =>

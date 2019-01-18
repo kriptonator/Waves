@@ -5,7 +5,7 @@ import akka.http.scaladsl.model.StatusCodes
 import com.wavesplatform.account.Address
 import com.wavesplatform.matcher.api.SimpleResponse
 import com.wavesplatform.matcher.{AddressActor, TestOrderDB}
-import com.wavesplatform.state.{ByteStr, Portfolio}
+import com.wavesplatform.state.ByteStr
 
 import scala.collection.mutable
 import scala.concurrent.Future
@@ -22,7 +22,6 @@ class OrderHistoryStub(system: ActorSystem) {
         Props(
           new AddressActor(
             lo.order.sender,
-            Portfolio.empty,
             5.seconds,
             5.seconds,
             new TestOrderDB(100),

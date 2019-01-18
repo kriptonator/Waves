@@ -28,17 +28,19 @@ import com.wavesplatform.utils.{ScorexLogging, Time}
 import com.wavesplatform.utx.UtxPool
 import com.wavesplatform.wallet.Wallet
 import io.netty.channel.group.ChannelGroup
+import monix.reactive.Observable
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.util.control.NonFatal
-import scala.util.{Failure, Success}
+import scala.util.Failure
 
 class Matcher(actorSystem: ActorSystem,
               time: Time,
               utx: UtxPool,
               allChannels: ChannelGroup,
               blockchain: Blockchain,
+              portfoliosChanged: Observable[Address],
               settings: WavesSettings,
               matcherPrivateKey: PrivateKeyAccount,
               isDuringShutdown: () => Boolean)
@@ -147,8 +149,6 @@ class Matcher(actorSystem: ActorSystem,
         import actorSystem.dispatcher
         implicit val timeout: Timeout = 5.seconds
 
-        val ok = Success(())
-
         currentOffset.set(oldestSnapshotOffset)
         matcherQueue.startConsume(
           oldestSnapshotOffset + 1,
@@ -168,11 +168,10 @@ class Matcher(actorSystem: ActorSystem,
                   case _                => requests.get(jLong.valueOf(eventWithMeta.offset)).trySuccess(r)
                 }
               }
-              .transform {
+              .onComplete {
                 case Failure(e) =>
                   log.warn(s"An error during processing an event with offset ${eventWithMeta.offset}: ${e.getMessage}", e)
-                  ok
-                case _ => ok
+                case _ =>
               }
           }
         )
@@ -185,7 +184,8 @@ class Matcher(actorSystem: ActorSystem,
   )
 
   private lazy val addressActors =
-    actorSystem.actorOf(Props(new AddressDirectory(utx.portfolio, storeEvent, matcherSettings, OrderDB(matcherSettings, db))), "addresses")
+    actorSystem.actorOf(Props(new AddressDirectory(portfoliosChanged, utx.portfolio, storeEvent, matcherSettings, OrderDB(matcherSettings, db))),
+                        "addresses")
 
   private lazy val blacklistedAddresses = settings.matcherSettings.blacklistedAddresses.map(Address.fromString(_).explicitGet())
   private lazy val matcherPublicKey     = PublicKeyAccount(matcherPrivateKey.publicKey)
@@ -247,6 +247,7 @@ object Matcher extends ScorexLogging {
             utx: UtxPool,
             allChannels: ChannelGroup,
             blockchain: Blockchain,
+            portfoliosChanged: Observable[Address],
             settings: WavesSettings,
             isDuringShutdown: () => Boolean): Option[Matcher] =
     try {
@@ -255,7 +256,7 @@ object Matcher extends ScorexLogging {
         pk      <- wallet.privateKeyAccount(address)
       } yield pk).explicitGet()
 
-      val matcher = new Matcher(actorSystem, time, utx, allChannels, blockchain, settings, privateKey, isDuringShutdown)
+      val matcher = new Matcher(actorSystem, time, utx, allChannels, blockchain, portfoliosChanged, settings, privateKey, isDuringShutdown)
       matcher.runMatcher()
       Some(matcher)
     } catch {

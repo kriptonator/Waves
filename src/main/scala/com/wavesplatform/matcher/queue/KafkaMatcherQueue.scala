@@ -76,7 +76,7 @@ class KafkaMatcherQueue(settings: Settings)(implicit mat: ActorMaterializer) ext
     ConsumerSettings(config, new StringDeserializer, deserializer)
   }
 
-  override def startConsume(fromOffset: QueueEventWithMeta.Offset, process: QueueEventWithMeta => Future[Unit]): Unit = {
+  override def startConsume(fromOffset: QueueEventWithMeta.Offset, process: QueueEventWithMeta => Unit): Unit = {
     log.info(s"Start consuming from $fromOffset")
     var currentOffset  = fromOffset
     val topicPartition = new TopicPartition(settings.topic, 0)
@@ -92,13 +92,11 @@ class KafkaMatcherQueue(settings: Settings)(implicit mat: ActorMaterializer) ext
           .plainSource(consumerSettings, Subscriptions.assignmentWithOffset(topicPartition -> currentOffset))
           .mapMaterializedValue(consumerControl.set)
           .buffer(settings.consumer.bufferSize, OverflowStrategy.backpressure)
-          .mapAsync(5) { msg =>
+          .map { msg =>
             // We can do it in parallel, because we're just applying verified events
             val req = QueueEventWithMeta(msg.offset(), msg.timestamp(), msg.value())
-            process(req).transform { x =>
-              currentOffset = msg.offset()
-              x
-            }
+            process(req)
+            currentOffset = math.max(currentOffset, msg.offset())
           }
       }
       .runWith(Sink.ignore)
@@ -112,9 +110,10 @@ class KafkaMatcherQueue(settings: Settings)(implicit mat: ActorMaterializer) ext
 
   override def close(timeout: FiniteDuration): Unit = {
     duringShutdown.set(true)
+    val stoppingConsumer = consumerControl.get().shutdown()
     producer.complete()
     Await.result(producer.watchCompletion(), timeout)
-    Await.result(consumerControl.get().shutdown(), timeout)
+    Await.result(stoppingConsumer, timeout)
   }
 
 }
