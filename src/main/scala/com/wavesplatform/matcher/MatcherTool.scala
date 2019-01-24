@@ -13,6 +13,8 @@ import com.wavesplatform.account.{Address, AddressScheme}
 import com.wavesplatform.database._
 import com.wavesplatform.db.openDB
 import com.wavesplatform.matcher.market.OrderBookActor
+import com.wavesplatform.matcher.model.LimitOrder
+import com.wavesplatform.matcher.model.MatcherModel.{Level, Price}
 import com.wavesplatform.settings.{WavesSettings, loadConfig}
 import com.wavesplatform.state.ByteStr
 import com.wavesplatform.transaction.assets.exchange.AssetPair
@@ -104,9 +106,16 @@ object MatcherTool extends ScorexLogging {
             val lastSnapshotKey     = MatcherSnapshotStore.kSnapshot(persistenceId, lastSnapshotNr)
             val lastSnapshotRawData = lastSnapshotKey.parse(snapshotDB.get(lastSnapshotKey))
             val lastSnapshot        = se.deserialize(lastSnapshotRawData, classOf[Snapshot]).get.data.asInstanceOf[OrderBookActor.Snapshot].orderBook
+
+            def formatOrders(v: Iterable[(Price, Level[LimitOrder])]) =
+              (for {
+                (_, l) <- v
+                lo     <- l
+              } yield s"${lo.order.id()} -> $lo").mkString("\n")
+
             println(s"Last snapshot: $lastSnapshot")
-            println(s"Asks:\n${lastSnapshot.asks.valuesIterator.flatten.map(x => s"${x.order.id()} -> $x").mkString("\n")}")
-            println(s"Bids:\n${lastSnapshot.bids.valuesIterator.flatten.map(x => s"${x.order.id()} -> $x").mkString("\n")}")
+            println(s"Asks:\n${formatOrders(lastSnapshot.asks)}")
+            println(s"Bids:\n${formatOrders(lastSnapshot.bids)}")
           }
         } finally {
           Await.ready(system.terminate(), Duration.Inf)
